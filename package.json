@@ -1,13 +1,13 @@
 {
-  "name": "opensea-sales-tracker",
+  "name": "opensea-sales-indexer",
   "license": "UNLICENSED",
   "scripts": {
     "codegen": "graph codegen",
     "build": "graph build",
-    "deploy": "graph deploy --node https://api.thegraph.com/deploy/ --ipfs https://api.thegraph.com/ipfs/ xenoliss/opensea-sales-tracker",
-    "create-local": "graph create --node http://localhost:8020/ xenoliss/opensea-sales-tracker",
-    "remove-local": "graph remove --node http://localhost:8020/ xenoliss/opensea-sales-tracker",
-    "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 xenoliss/opensea-sales-tracker"
+    "deploy": "graph deploy --node https://api.thegraph.com/deploy/ --ipfs https://api.thegraph.com/ipfs/ xenoliss/opensea-sales-indexer",
+    "create-local": "graph create --node http://localhost:8020/ xenoliss/opensea-sales-indexer",
+    "remove-local": "graph remove --node http://localhost:8020/ xenoliss/opensea-sales-indexer",
+    "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 xenoliss/opensea-sales-indexer"
   },
   "dependencies": {
     "@graphprotocol/graph-cli": "0.20.0",

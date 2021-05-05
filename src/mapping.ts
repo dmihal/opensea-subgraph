@@ -1,88 +1,286 @@
-import { BigInt } from "@graphprotocol/graph-ts"
+import { Address, BigInt, Bytes } from "@graphprotocol/graph-ts"
 import {
-  WyvernExchange,
-  OrderApprovedPartOne,
-  OrderApprovedPartTwo,
-  OrderCancelled,
-  OrdersMatched,
-  OwnershipRenounced,
-  OwnershipTransferred
+  AtomicMatch_Call
 } from "../generated/WyvernExchange/WyvernExchange"
-import { ExampleEntity } from "../generated/schema"
+import { Nft, NftOpenSeaSaleLookupTable, OpenSeaSale } from "../generated/schema"
+import { WYVERN_ATOMICIZER_ADDRESS } from "./constants";
 
-export function handleOrderApprovedPartOne(event: OrderApprovedPartOne): void {
-  // Entities can be loaded from the store using a string ID; this ID
-  // needs to be unique across all entities of the same type
-  let entity = ExampleEntity.load(event.transaction.from.toHex())
+/** Call handlers */
+/**
+ * 
+ * @param call The AtomicMatch call that triggered this call handler.   
+ * @description When a sale is made on OpenSea an AtomicMatch_ call is invoked.
+ *              This handler will create the associated OpenSeaSale entity
+ */
+export function handleAtomicMatch_(call: AtomicMatch_Call): void {
+  let addrs: Address[] = call.inputs.addrs;
+  let saleAdress: Address = addrs[11];
+  let saleTargetAddressStr: string = saleAdress.toHexString();
 
-  // Entities only exist after they have been saved to the store;
-  // `null` checks allow to create entities on demand
-  if (entity == null) {
-    entity = new ExampleEntity(event.transaction.from.toHex())
 
-    // Entity fields can be set using simple assignments
-    entity.count = BigInt.fromI32(0)
+  if (saleTargetAddressStr == WYVERN_ATOMICIZER_ADDRESS) {
+    /**
+        * When dealing with bundle sale, the targeted sale address is
+        * the address of the OpenSea Atomicizer (that will atomically 
+        * call every transferFrom methods of each NFT contract involved 
+        * in the bundle).
+        * 
+        */
+    _handleBundleSale(call);
   }
-
-  // BigInt and BigDecimal math are supported
-  entity.count = entity.count + BigInt.fromI32(1)
-
-  // Entity fields can be set based on event parameters
-  entity.hash = event.params.hash
-  entity.exchange = event.params.exchange
-
-  // Entities can be written to the store with `.save()`
-  entity.save()
-
-  // Note: If a handler doesn't require existing field values, it is faster
-  // _not_ to load the entity from the store. Instead, create it fresh with
-  // `new Entity(...)`, set the fields that should be updated and save the
-  // entity back to the store. Fields that were not set or unset remain
-  // unchanged, allowing for partial updates to be applied.
-
-  // It is also possible to access smart contracts from mappings. For
-  // example, the contract that has emitted the event can be connected to
-  // with:
-  //
-  // let contract = Contract.bind(event.address)
-  //
-  // The following functions can then be called on this contract to access
-  // state variables and other data:
-  //
-  // - contract.name(...)
-  // - contract.tokenTransferProxy(...)
-  // - contract.staticCall(...)
-  // - contract.guardedArrayReplace(...)
-  // - contract.minimumTakerProtocolFee(...)
-  // - contract.codename(...)
-  // - contract.testCopyAddress(...)
-  // - contract.testCopy(...)
-  // - contract.calculateCurrentPrice_(...)
-  // - contract.version(...)
-  // - contract.orderCalldataCanMatch(...)
-  // - contract.validateOrder_(...)
-  // - contract.calculateFinalPrice(...)
-  // - contract.protocolFeeRecipient(...)
-  // - contract.hashOrder_(...)
-  // - contract.ordersCanMatch_(...)
-  // - contract.registry(...)
-  // - contract.minimumMakerProtocolFee(...)
-  // - contract.hashToSign_(...)
-  // - contract.cancelledOrFinalized(...)
-  // - contract.owner(...)
-  // - contract.exchangeToken(...)
-  // - contract.validateOrderParameters_(...)
-  // - contract.INVERSE_BASIS_POINT(...)
-  // - contract.calculateMatchPrice_(...)
-  // - contract.approvedOrders(...)
+  else {
+    /**
+         * In case of normal "single asset sale", the saleTarget input is
+         * set to the NFT contract.
+         */
+    _handleSingleAssetSale(call);
+  }
 }
 
-export function handleOrderApprovedPartTwo(event: OrderApprovedPartTwo): void {}
 
-export function handleOrderCancelled(event: OrderCancelled): void {}
+/** Private implementation */
 
-export function handleOrdersMatched(event: OrdersMatched): void {}
+/**
+ * 
+ * @param call The AtomicMatch call that triggered the handleAtomicMatch_ call handler.
+ * @description This function is used to handle the case of a "normal" sale made from OpenSea.
+ *              A "normal" sale is a sale that is not a bundle (only contains one asset).
+ */
+function _handleSingleAssetSale(call: AtomicMatch_Call): void {
+  let callInputs = call.inputs;
+  let addrs: Address[] = callInputs.addrs;
+  let uints: BigInt[] = callInputs.uints;
 
-export function handleOwnershipRenounced(event: OwnershipRenounced): void {}
+  // TODO: The price should be retrieved from the calculateMatchPrice_ method of OpenSea Smart Contract
+  let price: BigInt = uints[4];
 
-export function handleOwnershipTransferred(event: OwnershipTransferred): void {}
+  let nftAddrs: Address = addrs[11];
+  let nftAddrsStr: string = nftAddrs.toHexString();
+
+  let buyerAdress: Address = addrs[1]; // Buyer.maker
+  let sellerAdress: Address = addrs[8]; // Saler.maker
+  let paymentTokenErc20Address: Address = addrs[6];
+
+  // Merge sell order data with buy order data (just like they are doing in their contract)
+  let mergedCallDataStr = _guardedArrayReplace(callInputs.calldataBuy, callInputs.calldataSell, callInputs.replacementPatternBuy);
+
+  // Fetch the token ID that has been sold from the call data 
+  let tokenIdStr = _getSingleTokenIdFromTransferFromCallData(mergedCallDataStr, true);
+
+  // Create/Fetch the associated NFT
+  let completeNftId = nftAddrsStr + "-" + tokenIdStr;
+  let nft = _loadOrCreateNFT(completeNftId);
+
+  // Create the OpenSeaSale
+  let openSeaSaleId = call.transaction.hash.toHexString();
+  let openSeaSale = new OpenSeaSale(openSeaSaleId);
+  openSeaSale.saleType = "Single";
+  openSeaSale.blockNumber = call.block.number;
+  openSeaSale.blockTimestamp = call.block.timestamp;
+  openSeaSale.buyer = buyerAdress;
+  openSeaSale.seller = sellerAdress;
+  openSeaSale.paymentToken = paymentTokenErc20Address;
+  openSeaSale.price = price;
+  openSeaSale.summaryTokensSold = completeNftId;
+  openSeaSale.save();
+
+  // Create the associated entry in the Nft <=> OpenSeaSale lookup table
+  let tableEntryId = openSeaSaleId + "<=>" + completeNftId;
+  let nftOpenSeaSaleLookupTable = new NftOpenSeaSaleLookupTable(tableEntryId);
+  nftOpenSeaSaleLookupTable.nft = nft.id;
+  nftOpenSeaSaleLookupTable.openSeaSale = openSeaSale.id;
+  nftOpenSeaSaleLookupTable.save();
+}
+
+/**
+ * 
+ * @param call The AtomicMatch call that triggered the handleAtomicMatch_ call handler.
+ * @description This function is used to handle the case of a "bundle" sale made from OpenSea.
+ *              A "bundle" sale is a sale that contains several assets embeded in the same, atomic, transaction.
+ */
+function _handleBundleSale(call: AtomicMatch_Call): void {
+  let callInputs = call.inputs;
+  let addrs: Address[] = callInputs.addrs;
+  let uints: BigInt[] = callInputs.uints;
+
+  // TODO: The price should be retrieved from the calculateMatchPrice_ method of OpenSea Smart Contract
+  let price: BigInt = uints[4];
+
+  let buyerAdress: Address = addrs[1]; // Buyer.maker
+  let sellerAdress: Address = addrs[8]; // Saler.maker
+  let paymentTokenErc20Address: Address = addrs[6];
+
+  // Merge sell order data with buy order data (just like they are doing in their contract)
+  let mergedCallDataStr = _guardedArrayReplace(callInputs.calldataBuy, callInputs.calldataSell, callInputs.replacementPatternBuy);
+
+  // Fetch the token IDs list that has been sold from the call data for this bundle sale
+  let completeNftIdsList = _getCompleteNftIdFromCallData(mergedCallDataStr);
+
+  // Create the sale
+  let openSeaSaleId = call.transaction.hash.toHexString();
+  let openSeaSale = new OpenSeaSale(openSeaSaleId);
+  openSeaSale.saleType = "Bundle";
+  openSeaSale.blockNumber = call.block.number;
+  openSeaSale.blockTimestamp = call.block.timestamp;
+  openSeaSale.buyer = buyerAdress;
+  openSeaSale.seller = sellerAdress;
+  openSeaSale.paymentToken = paymentTokenErc20Address;
+  openSeaSale.price = price;
+
+  // Build the token sold summary and create all the associated entries in the Nft <=> OpenSeaSale lookup table
+  let summaryTokensSold = "";
+  for (let i = 0; i < completeNftIdsList.length; i++) {
+    let completeNftId = completeNftIdsList[i];
+    if (summaryTokensSold.length == 0) {
+      summaryTokensSold += completeNftId;
+    } else {
+      summaryTokensSold += "::" + completeNftId;
+    }
+
+    // Create/Fetch the associated NFT
+    let nft = _loadOrCreateNFT(completeNftId);
+
+    // Link both of them (NFT with OpenSeaSale)
+    let tableEntryId = openSeaSaleId + "<=>" + completeNftId;
+    let nftOpenSeaSaleLookupTable = new NftOpenSeaSaleLookupTable(tableEntryId);
+    nftOpenSeaSaleLookupTable.nft = nft.id;
+    nftOpenSeaSaleLookupTable.openSeaSale = openSeaSale.id;
+    nftOpenSeaSaleLookupTable.save();
+  }
+
+  openSeaSale.summaryTokensSold = summaryTokensSold;
+  openSeaSale.save();
+}
+
+/**
+ * Replace bytes in an array with bytes in another array, guarded by a bitmask
+ *
+ * @param array The original array
+ * @param replacement The replacement array
+ * @param mask The mask specifying which bits can be changed in the original array
+ * @returns The updated byte array
+ */
+function _guardedArrayReplace(array: Bytes, replacement: Bytes, mask: Bytes): string {
+  array.reverse();
+  replacement.reverse();
+  mask.reverse();
+
+  let bigIntgArray = BigInt.fromUnsignedBytes(array);
+  let bigIntReplacement = BigInt.fromUnsignedBytes(replacement);
+  let bigIntMask = BigInt.fromUnsignedBytes(mask);
+
+  // array |= replacement & mask;
+  bigIntReplacement = bigIntReplacement.bitAnd(bigIntMask);
+  bigIntgArray = bigIntgArray.bitOr(bigIntReplacement);
+  let callDataHexString = bigIntgArray.toHexString();
+  return callDataHexString;
+}
+
+/**
+ * 
+ * @param atomicizeCallData The ABI encoded atomicize method call used by OpenSea Smart library (WyvernAtomicizer)
+ *                          to trigger bundle sales (looping over NFT and calling transferFrom for each)
+ * @returns The list of associated full name NFT in the bundle
+ */
+function _getCompleteNftIdFromCallData(atomicizeCallData: string): string[] {
+  const TRAILING_0x = 2;
+  const METHOD_ID_LENGTH = 8;
+  const UINT_256_LENGTH = 64;
+
+  let indexStartNbToken = TRAILING_0x + METHOD_ID_LENGTH + UINT_256_LENGTH * 4;
+  let indexStopNbToken = indexStartNbToken + UINT_256_LENGTH;
+  let nbTokenStr = atomicizeCallData.substring(indexStartNbToken, indexStopNbToken);
+  let nbToken = parseI32(nbTokenStr, 16);
+
+  // Get the associated NFT contracts
+  let nftContractsAddrsList: string[] = [];
+  let offset = indexStopNbToken;
+  for (let i = 0; i < nbToken; i++) {
+    let addrs = atomicizeCallData.substring(offset, offset + UINT_256_LENGTH);
+    nftContractsAddrsList.push(addrs);
+
+    // Move forward in the call data
+    offset += UINT_256_LENGTH;
+  }
+
+  /**
+   * After reading the contract addresses involved in the bundle sale
+   * there are 2 chunks of params of length nbToken * UINT_256_LENGTH.
+   * 
+   * Those chunks are each preceded by a "chunk metadata" of length UINT_256_LENGTH
+   * Finalluy a last "chunk metadata" is set of length UINT_256_LENGTH. (3 META_CHUNKS)
+   *  
+   * 
+   * After that we are reading the abiencoded data representing the transferFrom calls
+   */
+  const LEFT_CHUNKS = 2;
+  const NB_META_CHUNKS = 3;
+  offset += nbToken * UINT_256_LENGTH * LEFT_CHUNKS + NB_META_CHUNKS * UINT_256_LENGTH;
+
+  // Get the NFT token IDs
+  const TRANSFER_FROM_DATA_LENGTH = METHOD_ID_LENGTH + UINT_256_LENGTH * 3;
+  let tokenIdsList: string[] = [];
+  for (let i = 0; i < nbToken; i++) {
+    let transferFromData = atomicizeCallData.substring(offset, offset + TRANSFER_FROM_DATA_LENGTH);
+    let tokenIdstr = _getSingleTokenIdFromTransferFromCallData(transferFromData, false);
+    tokenIdsList.push(tokenIdstr);
+
+    // Move forward in the call data
+    offset += TRANSFER_FROM_DATA_LENGTH;
+  }
+
+  // Build the complete Nfts Ids (NFT contract - Token ID)
+  let completeNftIdsList: string[] = [];
+  for (let i = 0; i < nftContractsAddrsList.length; i++) {
+    let contractAddrsStr = nftContractsAddrsList[i];
+    let tokenIdStr = tokenIdsList[i];
+
+    completeNftIdsList.push(contractAddrsStr + '-' + tokenIdStr);
+  }
+
+  return completeNftIdsList;
+}
+
+/**
+ * 
+ * @param transferFromData The ABI encoded transferFrom method call used by OpenSea Smart contract 
+ *                 to trigger the Nft transfer between the seller and the buyer
+ * @returns The tokenId (string) of the transfer
+ */
+function _getSingleTokenIdFromTransferFromCallData(transferFromData: string, trailing0x: boolean): string {
+  let TRAILING_0x = trailing0x ? 2 : 0;
+  const METHOD_ID_LENGTH = 8;
+  const UINT_256_LENGTH = 64;
+
+  /**
+   * The calldata input is formated as:
+   * Format => METHOD_ID (transferFrom) | FROM | TO | TOKEN_ID
+   * Size   =>            X             |   Y  |  Y |    Y
+   *      Where :
+   *          - X = 32 bits (8 hex chars)
+   *          - Y = 256 bits (64 hex chars)
+   * 
+   * +2 | 0 chars for the "0x" leading part
+   */
+  let tokenIdHexStr: string = transferFromData.substring(TRAILING_0x + METHOD_ID_LENGTH + UINT_256_LENGTH * 2);
+  let tokenId = parseI64(tokenIdHexStr, 16);
+  let tokenIdStr: string = tokenId.toString();
+
+  return tokenIdStr;
+}
+
+/**
+ * 
+ * @param completeNftId The compleye NFT Id to load
+ * @returns The feteched/created Nft entity
+ */
+function _loadOrCreateNFT(completeNftId: string): Nft {
+  let nft = Nft.load(completeNftId);
+
+  if (nft == null) {
+    nft = new Nft(completeNftId);
+    nft.save();
+  }
+
+  return nft as Nft;
+}
