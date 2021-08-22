@@ -4,13 +4,14 @@
   "scripts": {
     "codegen": "graph codegen",
     "build": "graph build",
-    "deploy": "graph deploy --node https://api.thegraph.com/deploy/ --ipfs https://api.thegraph.com/ipfs/ xenoliss/opensea-sales-indexer",
-    "create-local": "graph create --node http://localhost:8020/ xenoliss/opensea-sales-indexer",
-    "remove-local": "graph remove --node http://localhost:8020/ xenoliss/opensea-sales-indexer",
-    "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 xenoliss/opensea-sales-indexer"
+    "deploy": "graph deploy --node https://api.thegraph.com/deploy/ --ipfs https://api.thegraph.com/ipfs/ dmihal/opensea-sales-indexer",
+    "create-local": "graph create --node http://localhost:8020/ dmihal/opensea-sales-indexer",
+    "remove-local": "graph remove --node http://localhost:8020/ dmihal/opensea-sales-indexer",
+    "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 dmihal/opensea-sales-indexer"
   },
   "dependencies": {
     "@graphprotocol/graph-cli": "0.20.0",
     "@graphprotocol/graph-ts": "0.20.0"
-  }
+  },
+  "version": "0.0.0"
 }

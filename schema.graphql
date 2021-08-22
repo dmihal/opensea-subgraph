@@ -36,21 +36,47 @@ type OpenSeaSale @entity {
 }
 
 
-type Nft @entity {
+type NFTItem @entity {
   "The complete NFT id sold (NFT contract - Token ID)"
   id: ID!
 
   "Nft <=> OpenSeaSale lookup table to get the OpenSea Sale history"
   nftOpenSeaSaleLookupTable: [NftOpenSeaSaleLookupTable!]! @derivedFrom(field: "nft")
+
+  collection: NFTCollection!
 }
 
+type NFTCollection @entity {
+  "NFT contract address"
+  id: ID!
+
+  name: String!
+
+  "All items in the collection with at least 1 sale"
+  items: [NFTItem!]! @derivedFrom(field: "collection")
+
+  totalVolumeByAsset: [TotalVolumeByAsset!]! @derivedFrom(field: "collection")
+}
+
+type TotalVolumeByAsset @entity {
+  "NFT contract address - asset symbol"
+  id: ID!
+
+  asset: String!
+
+  assetAddress: Bytes!
+
+  amount: BigDecimal!
+
+  collection: NFTCollection!
+}
 
 type NftOpenSeaSaleLookupTable @entity {
   "Set to `Nft Id <=> OpenSeaSale Id"
   id: ID!
 
   "The Nft sold"
-  nft: Nft!
+  nft: NFTItem!
 
   "The association OpenSea sale"
   openSeaSale: OpenSeaSale!

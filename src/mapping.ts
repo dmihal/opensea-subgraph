@@ -1,8 +1,9 @@
-import { Address, BigInt, Bytes } from "@graphprotocol/graph-ts"
+import { Address, BigInt, Bytes, ethereum } from "@graphprotocol/graph-ts"
 import {
   AtomicMatch_Call
 } from "../generated/WyvernExchange/WyvernExchange"
-import { Nft, NftOpenSeaSaleLookupTable, OpenSeaSale } from "../generated/schema"
+import { ERC721 } from "../generated/WyvernExchange/ERC721"
+import { NFTItem, NFTCollection, NftOpenSeaSaleLookupTable, OpenSeaSale } from "../generated/schema"
 import { WYVERN_ATOMICIZER_ADDRESS } from "./constants";
 
 /** Call handlers */
@@ -67,9 +68,10 @@ function _handleSingleAssetSale(call: AtomicMatch_Call): void {
   // Fetch the token ID that has been sold from the call data 
   let tokenIdStr = _getSingleTokenIdFromTransferFromCallData(mergedCallDataStr, true);
 
+  // Create/Fetch the collection
+  let collection = _loadOrCreateCollection(nftAddrs)
   // Create/Fetch the associated NFT
-  let completeNftId = nftAddrsStr + "-" + tokenIdStr;
-  let nft = _loadOrCreateNFT(completeNftId);
+  let nft = _loadOrCreateNFT(nftAddrs, tokenIdStr);
 
   // Create the OpenSeaSale
   let openSeaSaleId = call.transaction.hash.toHexString();
@@ -81,11 +83,11 @@ function _handleSingleAssetSale(call: AtomicMatch_Call): void {
   openSeaSale.seller = sellerAdress;
   openSeaSale.paymentToken = paymentTokenErc20Address;
   openSeaSale.price = price;
-  openSeaSale.summaryTokensSold = completeNftId;
+  openSeaSale.summaryTokensSold = nft.id;
   openSeaSale.save();
 
   // Create the associated entry in the Nft <=> OpenSeaSale lookup table
-  let tableEntryId = openSeaSaleId + "<=>" + completeNftId;
+  let tableEntryId = openSeaSaleId + "<=>" + nft.id;
   let nftOpenSeaSaleLookupTable = new NftOpenSeaSaleLookupTable(tableEntryId);
   nftOpenSeaSaleLookupTable.nft = nft.id;
   nftOpenSeaSaleLookupTable.openSeaSale = openSeaSale.id;
@@ -138,7 +140,10 @@ function _handleBundleSale(call: AtomicMatch_Call): void {
     }
 
     // Create/Fetch the associated NFT
-    let nft = _loadOrCreateNFT(completeNftId);
+    let splitId = completeNftId.split('-')
+    let collectionAddress = splitId[0]
+    let nftId = splitId[1]
+    let nft = _loadOrCreateNFT(Address.fromString(collectionAddress), nftId);
 
     // Link both of them (NFT with OpenSeaSale)
     let tableEntryId = openSeaSaleId + "<=>" + completeNftId;
@@ -262,6 +267,7 @@ function _getSingleTokenIdFromTransferFromCallData(transferFromData: string, tra
    * 
    * +2 | 0 chars for the "0x" leading part
    */
+  // let decoded = ethereum.decode("(bytes8,address,uint256)", transferFromData);
   let tokenIdHexStr: string = transferFromData.substring(TRAILING_0x + METHOD_ID_LENGTH + UINT_256_LENGTH * 2);
   let tokenId = parseI64(tokenIdHexStr, 16);
   let tokenIdStr: string = tokenId.toString();
@@ -274,13 +280,34 @@ function _getSingleTokenIdFromTransferFromCallData(transferFromData: string, tra
  * @param completeNftId The compleye NFT Id to load
  * @returns The feteched/created Nft entity
  */
-function _loadOrCreateNFT(completeNftId: string): Nft {
-  let nft = Nft.load(completeNftId);
+function _loadOrCreateNFT(collectionAddress: Address, tokenIdStr: string): NFTItem {
+  let completeNftId = collectionAddress.toHexString() + "-" + tokenIdStr;
+  let nft = NFTItem.load(completeNftId);
 
   if (nft == null) {
-    nft = new Nft(completeNftId);
+    nft = new NFTItem(completeNftId);
+    nft.collection = collectionAddress.toHexString()
     nft.save();
   }
 
-  return nft as Nft;
+  return nft as NFTItem;
+}
+
+/**
+ * 
+ * @param completeNftId The compleye NFT Id to load
+ * @returns The feteched/created Nft entity
+ */
+function _loadOrCreateCollection(collectionAddress: Address): NFTCollection {
+  let collection = NFTCollection.load(collectionAddress.toHexString());
+
+  if (collection == null) {
+    collection = new NFTCollection(collectionAddress.toHexString());
+    let contract = ERC721.bind(collectionAddress)
+    let nameTry = contract.try_name()
+    collection.name = nameTry.reverted ? "" : nameTry.value
+    collection.save();
+  }
+
+  return collection as NFTCollection;
 }
