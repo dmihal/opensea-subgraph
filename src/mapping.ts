@@ -3,7 +3,9 @@ import {
   AtomicMatch_Call
 } from "../generated/WyvernExchange/WyvernExchange"
 import { ERC721 } from "../generated/WyvernExchange/ERC721"
-import { NFTItem, NFTCollection, NftOpenSeaSaleLookupTable, OpenSeaSale } from "../generated/schema"
+import {
+  NFTItem, NFTCollection, NftOpenSeaSaleLookupTable, OpenSeaSale, TotalVolumeByAsset
+} from "../generated/schema"
 import { WYVERN_ATOMICIZER_ADDRESS } from "./constants";
 
 /** Call handlers */
@@ -72,6 +74,10 @@ function _handleSingleAssetSale(call: AtomicMatch_Call): void {
   let collection = _loadOrCreateCollection(nftAddrs)
   // Create/Fetch the associated NFT
   let nft = _loadOrCreateNFT(nftAddrs, tokenIdStr);
+
+  let volumeEntity = _loadOrCreateVolumeByAsset(nftAddrs, paymentTokenErc20Address)
+  volumeEntity.amount += price.divDecimal(BigInt.fromI32(10).pow(18).toBigDecimal())
+  volumeEntity.save()
 
   // Create the OpenSeaSale
   let openSeaSaleId = call.transaction.hash.toHexString();
@@ -310,4 +316,20 @@ function _loadOrCreateCollection(collectionAddress: Address): NFTCollection {
   }
 
   return collection as NFTCollection;
+}
+
+function _loadOrCreateVolumeByAsset(collectionAddress: Address, paymentAddress: Address): TotalVolumeByAsset {
+  let id = collectionAddress.toHexString() + '-' + paymentAddress.toHexString()
+
+    let entity = TotalVolumeByAsset.load(collectionAddress.toHexString());
+
+  if (entity == null) {
+    entity = new TotalVolumeByAsset(collectionAddress.toHexString())
+    entity.asset = paymentAddress.toHexString()
+    entity.assetAddress = paymentAddress
+    entity.amount = BigInt.fromI32(0).toBigDecimal()
+    entity.collection = collectionAddress.toHexString()
+  }
+
+  return entity as TotalVolumeByAsset;
 }
