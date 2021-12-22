@@ -7,6 +7,7 @@ import {
   NFTItem, NFTCollection, NftOpenSeaSaleLookupTable, OpenSeaSale, TotalVolumeByAsset
 } from "../generated/schema"
 import { WYVERN_ATOMICIZER_ADDRESS } from "./constants";
+import { getAssetName } from "./assets"
 
 /** Call handlers */
 /**
@@ -147,9 +148,9 @@ function _handleBundleSale(call: AtomicMatch_Call): void {
 
     // Create/Fetch the associated NFT
     let splitId = completeNftId.split('-')
-    let collectionAddress = splitId[0]
+    let collectionAddress = Address.fromString('0x' + splitId[0].substr(24))
     let nftId = splitId[1]
-    let nft = _loadOrCreateNFT(Address.fromString(collectionAddress), nftId);
+    let nft = _loadOrCreateNFT(collectionAddress, nftId);
 
     // Link both of them (NFT with OpenSeaSale)
     let tableEntryId = openSeaSaleId + "<=>" + completeNftId;
@@ -325,7 +326,10 @@ function _loadOrCreateVolumeByAsset(collectionAddress: Address, paymentAddress: 
 
   if (entity == null) {
     entity = new TotalVolumeByAsset(collectionAddress.toHexString())
-    entity.asset = paymentAddress.toHexString()
+    entity.asset = getAssetName(paymentAddress)
+    if (entity.asset == '') {
+      entity.asset = paymentAddress.toHexString()
+    }
     entity.assetAddress = paymentAddress
     entity.amount = BigInt.fromI32(0).toBigDecimal()
     entity.collection = collectionAddress.toHexString()
